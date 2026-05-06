@@ -1,0 +1,8 @@
+#!/bin/bash
+docker rm -f webtop 2>/dev/null; 
+rm -f ~/webtop_data/.config/chromium/Singleton*; 
+docker load -i ~/webtop_image.tar; 
+docker run -d --name=webtop -e PUID=1000 -e PGID=1000 -e TZ=Europe/Warsaw -e SCREEN_WIDTH=1280 -e SCREEN_HEIGHT=720 -p 8080:3000 -v ~/webtop_data:/config --shm-size="1gb" -e CHROME_ARGS="--password-store=basic --no-sandbox" linuxserver/webtop:latest
+if [ -f "/google/devshell/bashrc.google" ]; then
+  source "/google/devshell/bashrc.google"
+fi
