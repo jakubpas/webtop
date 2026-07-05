@@ -2,9 +2,9 @@
 set -e
 
 # Final resolution parameters with aspect-ratio optimized default
-# 1512x744 is exactly half of the user's 3024x1488 native resolution
-WIDTH=${1:-1512}
-HEIGHT=${2:-744}
+# 2268x1116 is 3/4 of the user's 3024x1488 native resolution
+WIDTH=${1:-2268}
+HEIGHT=${2:-1116}
 
 echo "Starting webtop at ${WIDTH}x${HEIGHT} (Full-Screen High-DPI Mode)..."
 
