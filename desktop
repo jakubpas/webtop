@@ -1,8 +1,41 @@
 #!/bin/bash
-docker rm -f webtop 2>/dev/null; 
-rm -f ~/webtop_data/.config/chromium/Singleton*; 
-docker load -i ~/webtop_image.tar; 
-docker run -d --name=webtop -e PUID=1000 -e PGID=1000 -e TZ=Europe/Warsaw -e SCREEN_WIDTH=1280 -e SCREEN_HEIGHT=720 -p 8080:3000 -v ~/webtop_data:/config --shm-size="1gb" -e CHROME_ARGS="--password-store=basic --no-sandbox" linuxserver/webtop:latest
+set -e
+
+# Final resolution parameters with aspect-ratio optimized default
+# 1512x744 is exactly half of the user's 3024x1488 native resolution
+WIDTH=${1:-1512}
+HEIGHT=${2:-744}
+
+echo "Starting webtop at ${WIDTH}x${HEIGHT} (Full-Screen High-DPI Mode)..."
+
+# Ensure old instances are stopped
+docker stop webtop 2>/dev/null || true
+docker rm -f webtop 2>/dev/null || true
+rm -f ~/webtop_data/.config/chromium/Singleton*
+
+# Cache image loading
+if [[ "$(docker images -q linuxserver/webtop:latest 2> /dev/null)" == "" ]]; then
+  echo "Image not found, loading from tarball..."
+  docker load -i ~/webtop_image.tar
+else
+  echo "Image found, skipping load."
+fi
+
+# Run with verified Selkies scaling settings
+docker run -d --name=webtop \
+  -e PUID=1000 -e PGID=1000 -e TZ=Europe/Warsaw \
+  -e SCREEN_WIDTH="$WIDTH" -e SCREEN_HEIGHT="$HEIGHT" \
+  -e SELKIES_IS_MANUAL_RESOLUTION_MODE=true \
+  -e SELKIES_MANUAL_WIDTH="$WIDTH" \
+  -e SELKIES_MANUAL_HEIGHT="$HEIGHT" \
+  -e SELKIES_USE_CSS_SCALING=true \
+  -e SELKIES_SCALING_DPI=192 \
+  -p 8080:3000 -v ~/webtop_data:/config \
+  --shm-size="1gb" \
+  -e CHROME_ARGS="--password-store=basic --no-sandbox" \
+  linuxserver/webtop:latest
+
+# Google Cloud Shell environment integration
 if [ -f "/google/devshell/bashrc.google" ]; then
   source "/google/devshell/bashrc.google"
 fi
