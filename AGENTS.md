@@ -261,16 +261,30 @@ here so they aren't re-attempted:
   stack — reverted, no capability restrictions applied. Container verified
   running and responding `HTTP 200` on `127.0.0.1:8082`, `~/webtop_data` ownership
   confirmed correct for uid/gid 1001.)*
-- [ ] **`desktop-tls-cert`** *(depends on DNS record)* — Once the DNS record has
+- [x] **`desktop-tls-cert`** *(depends on DNS record)* — Once the DNS record has
   propagated: `sudo certbot --apache -d desktop.darkplanet.pl` — a **dedicated**
   cert, separate from the existing multi-SAN `darkplanet.pl` cert (see rationale above).
-- [ ] **`desktop-apache-vhost`** *(depends on docker + cert)* — New
+  *(Done 2026-07-17 — cert issued at `/etc/letsencrypt/live/desktop.darkplanet.pl/`,
+  ECDSA, valid until 2026-10-15, covered by the existing auto-renewal timer.
+  Certbot's own auto-install step failed with "vhost ambiguity" since no vhost
+  exists for this domain yet — harmless/expected, the vhost is hand-built in
+  the next step instead of letting certbot auto-inject it.)*
+- [x] **`desktop-apache-vhost`** *(depends on docker + cert)* — New
   `/etc/apache2/sites-available/00X-desktop.darkplanet.pl.conf`: `:80` → 301
   redirect to `:443`; `:443` with the new cert, `sudo a2enmod proxy_wstunnel`
   enabled, `ProxyPass`/`ProxyPassReverse` to `http://127.0.0.1:8082/` with
   WebSocket `Upgrade`/`Connection` headers wired through, `AuthType Basic` +
   bcrypt `.htpasswd` (`htpasswd -B`) + `Require valid-user` wrapping the whole
   vhost. Reload with `sudo systemctl reload apache2`.
+  *(Done 2026-07-17 — config checked into `apache/002-desktop.darkplanet.pl.conf`
+  in this repo, deployed as `/etc/apache2/sites-available/002-desktop.darkplanet.pl.conf`
+  on the server. `mod_proxy_wstunnel` enabled; WebSocket upgrade routed via a
+  `RewriteCond %{HTTP:Upgrade} =websocket` rule to `ws://127.0.0.1:8082/` ahead
+  of the plain `ProxyPass`. Basic Auth via `/etc/apache2/.htpasswd-desktop`
+  (bcrypt, user `kuba`, mode 640, owned `root:www-data` — password generated
+  and shared with the user directly, NOT committed anywhere). Verified live:
+  no-auth → 401, wrong password → 401, correct password → 200,
+  `http://` → 301 redirect to `https://`.)*
 - [ ] **`desktop-fail2ban`** *(depends on vhost)* — Enable `fail2ban` (currently
   installed but inactive) and add a jail watching the new vhost's Apache
   auth-failure log entries.
