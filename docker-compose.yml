@@ -34,7 +34,7 @@ services:
       - SELKIES_FRAMERATE=15
       - SELKIES_H264_CRF=38
       - SELKIES_ENCODER=x264enc
-      - CHROME_ARGS=--password-store=basic --no-sandbox
+      - CHROME_ARGS=--password-store=basic --no-sandbox --test-type
     ports:
       # Loopback-only: nothing external can reach the container directly.
       # Apache is the only path in (TLS + Basic Auth), proxying to this port.

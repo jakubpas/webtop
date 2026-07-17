@@ -53,12 +53,16 @@ RUN apt-get update && \
     # the previous Chromium CHROME_ARGS behavior and to avoid any sandbox
     # namespace restrictions inside Docker. --password-store=basic matches
     # the previous Chromium setup (avoids depending on a system keyring that
-    # isn't present in this minimal desktop). Desktop file path is located
-    # dynamically since the .deb doesn't always drop it in the same spot
-    # across distro/package versions.
+    # isn't present in this minimal desktop). --test-type suppresses the
+    # "You are using an unsupported command-line flag: --no-sandbox" infobar
+    # Chrome otherwise shows on every launch - purely cosmetic, has no other
+    # effect (it's the standard flag automated/CI Chrome runs use to silence
+    # that warning; does not disable the sandbox any further than --no-sandbox
+    # already does). Desktop file path is located dynamically since the .deb
+    # doesn't always drop it in the same spot across distro/package versions.
     desktop_file=$(find /usr/share/applications -iname 'google-chrome*.desktop' | head -n1) && \
     if [ -n "$desktop_file" ]; then \
-      sed -i "s|Exec=/usr/bin/google-chrome-stable %U|Exec=/usr/bin/google-chrome-stable --no-sandbox --password-store=basic %U|" "$desktop_file"; \
+      sed -i "s|Exec=/usr/bin/google-chrome-stable %U|Exec=/usr/bin/google-chrome-stable --no-sandbox --test-type --password-store=basic %U|" "$desktop_file"; \
     else \
       echo "WARNING: google-chrome .desktop file not found - shortcut will need Exec flags added manually"; \
     fi
