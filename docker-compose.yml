@@ -1,0 +1,34 @@
+services:
+  webtop:
+    image: linuxserver/webtop:latest
+    container_name: webtop
+    restart: unless-stopped
+    environment:
+      - PUID=1001
+      - PGID=1001
+      - TZ=Europe/Warsaw
+      # Selkies high-DPI / manual resolution settings (see desktop script history
+      # for how these values were tuned for a 3024x1488 native display).
+      - SCREEN_WIDTH=2520
+      - SCREEN_HEIGHT=1240
+      - SELKIES_IS_MANUAL_RESOLUTION_MODE=true
+      - SELKIES_MANUAL_WIDTH=2520
+      - SELKIES_MANUAL_HEIGHT=1240
+      - SELKIES_USE_CSS_SCALING=true
+      - SELKIES_SCALING_DPI=192
+      - CHROME_ARGS=--password-store=basic --no-sandbox
+    ports:
+      # Loopback-only: nothing external can reach the container directly.
+      # Apache is the only path in (TLS + Basic Auth), proxying to this port.
+      - "127.0.0.1:8082:3000"
+    volumes:
+      - ${HOME}/webtop_data:/config
+    shm_size: "1gb"
+    mem_limit: "2g"
+    cpus: 2
+    # NOTE: tried `cap_drop: [ALL]` + `no-new-privileges:true` for extra
+    # isolation, but linuxserver/webtop's s6-init + nginx + X11 stack isn't
+    # designed to run capability-restricted (s6-applyuidgid needs setgroups,
+    # nginx needs to write its own log files / load modules, etc.) - it broke
+    # the container outright. Reverted; relying on the loopback-only port
+    # binding + mem/cpu caps + Apache-level auth for isolation instead.

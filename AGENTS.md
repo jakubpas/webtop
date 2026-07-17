@@ -84,37 +84,32 @@ can be opened from a browser and used like a normal remote Linux desktop.
 
 - Docker 29.1.3 installed. `kuba` is **not** in the `docker` group — must always
   use `sudo docker ...` (confirmed passwordless).
-- `~/webtop_data` and the webtop image **do not exist yet** on the server.
-- **Image pull/build happens locally, NOT on darkplanet.pl** — the server is a
-  shared production box with tight RAM/CPU headroom (mail, MySQL, portal.jar all
-  already running there), so pulling/unpacking a multi-hundred-MB image on it is
-  avoided entirely. Workflow (single command, no intermediate tarball on disk):
-  ```bash
-  docker pull linuxserver/webtop:latest
-  docker save linuxserver/webtop:latest | ssh kuba@darkplanet.pl 'sudo docker load'
-  ```
-  This pulls locally, streams the image straight over SSH, and loads it into
-  the server's Docker daemon in one step — no `scp`, no leftover `.tar` file to
-  manage/clean up on either end. To update the image later, just re-run the
-  same two lines.
+- **Image is pulled directly on the server**, not built/pulled locally and
+  streamed over — see "Deviations found during implementation" below for why
+  the original local-pull-then-`docker save | ssh ... docker load` plan was
+  abandoned (ARM64 vs AMD64 architecture mismatch). Just run
+  `sudo docker pull linuxserver/webtop:latest` (or `docker compose pull`) on
+  darkplanet.pl directly — the server is AMD64 so this always gets the right
+  architecture with no extra steps. A plain image pull is lightweight
+  (network + disk, not CPU-heavy), so this doesn't meaningfully compete with
+  the production services on this host.
   - `~/webtop_data` (persistent config/profile volume) is just an empty dir
     created directly on the server: `mkdir -p ~/webtop_data`.
   - **Back this dir up**: fold `~/webtop_data` into the existing `~/backups`
     routine already present on the server (it holds the persistent browser
     profile/session state — worth preserving across a container/host rebuild).
-- **Prefer a `docker-compose.yml` (checked into this repo) over a raw
-  `docker run` bash script** for the actual deployment — ports, PUID/PGID,
-  `mem_limit`/`cpus`, `restart: unless-stopped`, and the volume mount all become
-  declarative and diffable in git, instead of hardcoded flags in a shell
-  script. Bring it up with `docker compose up -d` (or a systemd unit that calls
-  that) rather than invoking `./desktop` by hand on the server.
-- **Extra isolation to test**: try `cap_drop: ["ALL"]` and
-  `security_opt: ["no-new-privileges:true"]` in the compose file. `linuxserver/webtop`
-  needs some capabilities back for Xorg — test and add back only what's
-  actually required rather than running fully privileged by default.
-- Required run-flag changes from the current `desktop` script:
-  - `-e PUID=1001 -e PGID=1001` (not 1000 — matches `kuba`'s actual uid/gid here).
-  - `-p 127.0.0.1:8082:3000` (not `8080:3000` — avoids the portal.jar collision,
+- **`docker-compose.yml` is checked into this repo** (not a raw `docker run`
+  bash script) — ports, PUID/PGID, `mem_limit`/`cpus`, `restart: unless-stopped`,
+  and the volume mount are all declarative and diffable in git. Deploy dir on
+  the server is `~/webtop/` (holds just the compose file); bring it up with
+  `cd ~/webtop && sudo docker compose up -d`.
+- **`cap_drop: [ALL]` + `no-new-privileges:true` was tried and reverted** — see
+  "Deviations found during implementation" below. `linuxserver/webtop`'s
+  s6-init/nginx stack isn't designed to run capability-restricted; isolation
+  instead relies on the loopback-only port binding + mem/cpu limits.
+- PUID/PGID/port fixes already applied vs. the original local `desktop` script:
+  - `PUID=1001`/`PGID=1001` (not 1000 — matches `kuba`'s actual uid/gid here).
+  - `127.0.0.1:8082:3000` (not `8080:3000` — avoids the portal.jar collision,
     and loopback-only so Apache is the only path in).
   - Add `--restart unless-stopped --memory=2g --cpus=2` for resilience across
     reboots and to protect co-located production services from resource
@@ -203,6 +198,36 @@ sudo docker images
 
 Planning complete as of 2026-07-17. Implementation not yet started. Build order below.
 
+## Deviations found during implementation
+
+Two parts of the original plan didn't survive contact with reality — recorded
+here so they aren't re-attempted:
+
+1. **Local-pull-then-stream for the Docker image didn't work.** The dev
+   machine used to prep the image (a Mac) is ARM64; the darkplanet.pl server is
+   AMD64. `docker pull` without `--platform` grabs the native (ARM64) image,
+   and `docker save | ssh ... docker load` shipped that straight to the AMD64
+   server, which then failed with `exec /init: exec format error`. Explicitly
+   pulling `--platform linux/amd64` locally avoids that, but then a second
+   problem hit: Docker's containerd-backed multi-arch image store couldn't
+   `docker save` a single-platform pull cleanly (`unable to create manifests
+   file: NotFound: content digest ... not found`). **Fix: just
+   `docker pull`/`docker compose pull` directly on the server** — it's AMD64
+   native so there's no cross-arch ambiguity, and a pull is lightweight
+   (network+disk, not CPU) so it doesn't meaningfully compete with production
+   services. The "avoid touching the server" concern from the original plan
+   was really about avoiding a *build*, not a plain image pull — pulling
+   directly on the server is fine and much simpler.
+2. **`cap_drop: [ALL]` + `no-new-privileges:true` broke the container.**
+   `linuxserver/webtop`'s s6-init + nginx stack needs several capabilities back
+   (`s6-applyuidgid: fatal: unable to set supplementary group list: Operation
+   not permitted`, nginx unable to write its own log files or load modules).
+   Reverted rather than spending more time reverse-engineering the minimal
+   capability set for a stack that isn't designed to run capability-restricted.
+   Isolation instead relies on: loopback-only port binding (`127.0.0.1:8082`,
+   unreachable except through Apache), `mem_limit`/`cpus` caps, and the
+   Apache-level TLS + Basic Auth + fail2ban layer.
+
 ## Implementation plan (step-by-step, in dependency order)
 
 - [x] **`dns-desktop-subdomain`** — Add `desktop IN A 142.4.215.81` to
@@ -216,7 +241,7 @@ Planning complete as of 2026-07-17. Implementation not yet started. Build order 
   *(Done 2026-07-17 — `scripts/bump-zone-serial.sh`, tested live against the
   server: bumped serial `2026071701 → 2026071702`, validated with
   `named-checkzone`, reloaded with `rndc reload`.)*
-- [ ] **`webtop-docker-run`** *(depends on DNS record)* — Create a
+- [x] **`webtop-docker-run`** *(depends on DNS record)* — Create a
   `docker-compose.yml` in this repo: port `127.0.0.1:8082:3000`,
   `PUID=1001`/`PGID=1001` (matches `kuba`'s uid/gid on darkplanet.pl, NOT the
   container default 1000), `mem_limit: 2g`, `cpus: 2`,
@@ -229,6 +254,13 @@ Planning complete as of 2026-07-17. Implementation not yet started. Build order 
   docker save linuxserver/webtop:latest | ssh kuba@darkplanet.pl 'sudo docker load'
   ```
   Then on the server: `mkdir -p ~/webtop_data`, `docker compose up -d`.
+  *(Done 2026-07-17, with two real deviations from the original plan — see
+  "Deviations found during implementation" below: (1) the local-pull-then-stream
+  approach broke due to an ARM64/AMD64 architecture mismatch — pulling directly
+  on the server instead; (2) `cap_drop: [ALL]` broke the container's s6-init/nginx
+  stack — reverted, no capability restrictions applied. Container verified
+  running and responding `HTTP 200` on `127.0.0.1:8082`, `~/webtop_data` ownership
+  confirmed correct for uid/gid 1001.)*
 - [ ] **`desktop-tls-cert`** *(depends on DNS record)* — Once the DNS record has
   propagated: `sudo certbot --apache -d desktop.darkplanet.pl` — a **dedicated**
   cert, separate from the existing multi-SAN `darkplanet.pl` cert (see rationale above).
