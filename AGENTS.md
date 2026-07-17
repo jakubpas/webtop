@@ -1,14 +1,14 @@
-# AGENTS.md — webtop / desktop.darkplanet.pl project
+# AGENTS.md — webtop / dev.darkplanet.pl project
 
 Context for future work on this repo. This branch (`darkplanet`) turns the local
 `webtop` launcher script into a permanently-hosted, authenticated remote desktop
-at **https://desktop.darkplanet.pl**, running on the `darkplanet.pl` production
+at **https://dev.darkplanet.pl**, running on the `darkplanet.pl` production
 server.
 
 ## Goal
 
 Run the `linuxserver/webtop` Docker container on the `darkplanet.pl` server,
-exposed at `desktop.darkplanet.pl` over HTTPS, protected by Basic Auth, so it
+exposed at `dev.darkplanet.pl` over HTTPS, protected by Basic Auth, so it
 can be opened from a browser and used like a normal remote Linux desktop.
 
 ## Target server: darkplanet.pl
@@ -52,10 +52,10 @@ can be opened from a browser and used like a normal remote Linux desktop.
   `snap.certbot.renew.timer` (active).
 - Existing certs of note:
   - `darkplanet.pl` (multi-SAN: darkplanet.pl, www.darkplanet.pl, signum-temporis.pl,
-    www.signum-temporis.pl) — **do not add desktop.darkplanet.pl to this one.**
+    www.signum-temporis.pl) — **do not add dev.darkplanet.pl to this one.**
   - `www.darkplanet.pl` (separate, single-domain).
-- Plan: issue a **new, dedicated cert** for `desktop.darkplanet.pl`:
-  `sudo certbot --apache -d desktop.darkplanet.pl` (run only after the DNS A
+- Plan: issue a **new, dedicated cert** for `dev.darkplanet.pl`:
+  `sudo certbot --apache -d dev.darkplanet.pl` (run only after the DNS A
   record above is live and propagated).
 
 ## Apache (2.4.58, prefork MPM)
@@ -63,7 +63,7 @@ can be opened from a browser and used like a normal remote Linux desktop.
 - Vhosts: `/etc/apache2/sites-available/*.conf`, symlinked into `sites-enabled/`.
   Existing numbering: `000-default`, `001-darkplanet.pl`, `003-jakubpas.net`,
   `004-signum-temporis.pl(+le-ssl)`, `005-download.jakubpas.net`. New vhost should
-  be `002-desktop.darkplanet.pl.conf` (or next free number).
+  be `002-dev.darkplanet.pl.conf` (or next free number).
 - Modules currently loaded: `ssl`, `proxy`, `proxy_http`, `auth_basic`, `authn_file`,
   `authz_user`, `headers`, `rewrite`, `deflate`, `expires`. **`proxy_wstunnel` is
   NOT enabled yet** — required for Selkies WebSocket streaming, must run
@@ -144,14 +144,14 @@ TLS, bcrypt Basic Auth, and a fail2ban jail (see below).
 ## Security posture / auth
 
 - Auth model: **Basic Auth at the Apache layer**, single user (`kuba`), bcrypt
-  hashed (`htpasswd -B /etc/apache2/.htpasswd-desktop kuba`), HTTPS-only so
+  hashed (`htpasswd -B /etc/apache2/.htpasswd-dev kuba`), HTTPS-only so
   credentials are encrypted in transit. This is intentionally simple per the
   current requirements — no SSO/2FA layer requested.
 - `fail2ban` is installed and running (`apache-auth` jail, `backend = auto`
   explicitly set — Ubuntu's default `backend = systemd` doesn't work for
   Apache's file-based error log, see deviations note above), watching
   `/var/log/apache2/error.log` for `AH01617` Basic Auth failures. 5 failures
-  in 10 minutes → 1 hour ban. Config: `fail2ban/jail.d/desktop-darkplanet.conf`
+  in 10 minutes → 1 hour ban. Config: `fail2ban/jail.d/dev-darkplanet.conf`
   in this repo. To unban an IP: `sudo fail2ban-client set apache-auth unbanip <ip>`.
 - `ufw` is inactive on this host and **intentionally left alone** — not part of
   this project's scope; security relies on webtop being loopback-only + Apache
@@ -182,7 +182,7 @@ ever resurfaces (e.g. after further vhost edits), verify with:
 curl -sk -v -u 'kuba:<password>' \
   -H "Connection: Upgrade" -H "Upgrade: websocket" \
   -H "Sec-WebSocket-Version: 13" -H "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==" \
-  https://desktop.darkplanet.pl/websocket
+  https://dev.darkplanet.pl/websocket
 ```
 Expect `HTTP/1.1 101 Switching Protocols` in the response headers — anything
 else (200, hanging, connection reset) means the Upgrade isn't being proxied
@@ -217,10 +217,19 @@ sudo docker images
 ## Status
 
 **Live and working as of 2026-07-17.** All 8 build steps complete —
-`https://desktop.darkplanet.pl` is deployed, TLS + Basic Auth + fail2ban are
+`https://dev.darkplanet.pl` is deployed, TLS + Basic Auth + fail2ban are
 active, and the desktop has been confirmed streaming correctly in-browser.
 See the checked-off plan below for what was done and the real issues hit
 along the way (worth reading before making further changes).
+
+**Renamed from `desktop.darkplanet.pl` to `dev.darkplanet.pl` on 2026-07-17**
+(same day as initial go-live) — the Docker container itself was never
+touched/restarted for this, only the DNS record, TLS cert, Apache vhost,
+`.htpasswd` file, and fail2ban jail were swapped over. Old `desktop`
+subdomain was fully decommissioned (not kept as an alias): DNS `A` record
+renamed to `dev`, dedicated cert `desktop.darkplanet.pl` deleted via
+`certbot delete`, old vhost file and `.htpasswd-desktop` removed. All repo
+file names/contents below already reflect the new `dev.darkplanet.pl` name.
 
 ## Post-deployment tuning & known quirks (2026-07-17, after initial go-live)
 
@@ -355,25 +364,25 @@ here so they aren't re-attempted:
   running and responding `HTTP 200` on `127.0.0.1:8082`, `~/webtop_data` ownership
   confirmed correct for uid/gid 1001.)*
 - [x] **`desktop-tls-cert`** *(depends on DNS record)* — Once the DNS record has
-  propagated: `sudo certbot --apache -d desktop.darkplanet.pl` — a **dedicated**
+  propagated: `sudo certbot --apache -d dev.darkplanet.pl` — a **dedicated**
   cert, separate from the existing multi-SAN `darkplanet.pl` cert (see rationale above).
-  *(Done 2026-07-17 — cert issued at `/etc/letsencrypt/live/desktop.darkplanet.pl/`,
+  *(Done 2026-07-17 — cert issued at `/etc/letsencrypt/live/dev.darkplanet.pl/`,
   ECDSA, valid until 2026-10-15, covered by the existing auto-renewal timer.
   Certbot's own auto-install step failed with "vhost ambiguity" since no vhost
   exists for this domain yet — harmless/expected, the vhost is hand-built in
   the next step instead of letting certbot auto-inject it.)*
 - [x] **`desktop-apache-vhost`** *(depends on docker + cert)* — New
-  `/etc/apache2/sites-available/00X-desktop.darkplanet.pl.conf`: `:80` → 301
+  `/etc/apache2/sites-available/00X-dev.darkplanet.pl.conf`: `:80` → 301
   redirect to `:443`; `:443` with the new cert, `sudo a2enmod proxy_wstunnel`
   enabled, `ProxyPass`/`ProxyPassReverse` to `http://127.0.0.1:8082/` with
   WebSocket `Upgrade`/`Connection` headers wired through, `AuthType Basic` +
   bcrypt `.htpasswd` (`htpasswd -B`) + `Require valid-user` wrapping the whole
   vhost. Reload with `sudo systemctl reload apache2`.
-  *(Done 2026-07-17 — config checked into `apache/002-desktop.darkplanet.pl.conf`
-  in this repo, deployed as `/etc/apache2/sites-available/002-desktop.darkplanet.pl.conf`
+  *(Done 2026-07-17 — config checked into `apache/002-dev.darkplanet.pl.conf`
+  in this repo, deployed as `/etc/apache2/sites-available/002-dev.darkplanet.pl.conf`
   on the server. `mod_proxy_wstunnel` enabled; WebSocket upgrade routed via a
   `RewriteCond %{HTTP:Upgrade} =websocket` rule to `ws://127.0.0.1:8082/` ahead
-  of the plain `ProxyPass`. Basic Auth via `/etc/apache2/.htpasswd-desktop`
+  of the plain `ProxyPass`. Basic Auth via `/etc/apache2/.htpasswd-dev`
   (bcrypt, user `kuba`, mode 640, owned `root:www-data` — password generated
   and shared with the user directly, NOT committed anywhere). Verified live:
   no-auth → 401, wrong password → 401, correct password → 200,
@@ -384,8 +393,8 @@ here so they aren't re-attempted:
   *(Done 2026-07-17 — `fail2ban` wasn't actually installed (earlier "inactive"
   check was misleading — systemd reports "inactive" for a nonexistent unit
   too); installed via apt. Jail config checked into
-  `fail2ban/jail.d/desktop-darkplanet.conf`, deployed to
-  `/etc/fail2ban/jail.d/desktop-darkplanet.conf`. Hit one real snag — Ubuntu's
+  `fail2ban/jail.d/dev-darkplanet.conf`, deployed to
+  `/etc/fail2ban/jail.d/dev-darkplanet.conf`. Hit one real snag — Ubuntu's
   `defaults-debian.conf` sets `backend = systemd` (journal) globally, so the
   jail was checking journal entries instead of the actual
   `/var/log/apache2/error.log` file Apache writes to, and never matched
