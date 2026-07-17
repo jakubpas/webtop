@@ -40,7 +40,13 @@ services:
       # Apache is the only path in (TLS + Basic Auth), proxying to this port.
       - "127.0.0.1:8082:3000"
     volumes:
-      - ${HOME}/webtop_data:/config
+      # Hardcoded rather than ${HOME}-interpolated: this project always runs
+      # `sudo docker compose ...` (kuba isn't in the docker group), and sudo
+      # resets $HOME to /root by default - `${HOME}/webtop_data` silently
+      # resolved to /root/webtop_data instead of kuba's home, diverging from
+      # the path this repo's docs/backup script assume. Hardcoding avoids
+      # that footgun regardless of how the command is invoked.
+      - /home/kuba/webtop_data:/config
     shm_size: "1gb"
     mem_limit: "2g"
     cpus: 2

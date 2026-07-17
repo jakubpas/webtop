@@ -361,6 +361,53 @@ Ubuntu base.
   (`/config/.config/google-chrome/Singleton*`) - same fix, same caveat about
   it not yet being automated.
 
+## Image size trim + volume path fix (2026-07-17, second pass)
+
+Two follow-up fixes made after the initial Ubuntu+Chrome switch, both
+verified end-to-end on darkplanet.pl (rebuild, recreate, HTTP 200, public
+`https://dev.darkplanet.pl` still 401s pre-auth, Chrome profile/Desktop
+shortcut confirmed intact across the recreate):
+
+- **`Dockerfile` is now multi-stage.** A first attempt at trimming bloat
+  (`docker-ce`/`docker-ce-cli`/`containerd.io`/`docker-buildx-plugin`/
+  `docker-compose-plugin` - unused Docker-in-Docker support linuxserver.io
+  bundles for their "mods" system - plus swapping `locales-all` for just
+  `locales` + `locale-gen en_US.UTF-8`) looked right but **did not actually
+  shrink the image** (stayed at 5.36GB): Docker layers are additive/union-
+  based, so deleting files in a later `RUN` layer only adds whiteout
+  markers - the deleted files' bytes are still physically present in the
+  earlier base-image layer and still counted in the image size. Fixed by
+  restructuring as `FROM ... AS builder` (does the apt work) followed by a
+  `FROM scratch` final stage that does `COPY --from=builder / /` (copies the
+  final *merged* filesystem view, i.e. post-whiteout, into one fresh layer)
+  plus explicit re-declaration of the base image's `ENV`/`EXPOSE`/`VOLUME`/
+  `ENTRYPOINT`/`LABEL` (captured via `docker inspect linuxserver/webtop:ubuntu-xfce`,
+  since `COPY --from` doesn't carry image config over). Actual result:
+  **5.36GB → 3.74GB** (~1.6GB saved - more than the ~576MB purge target
+  alone, since squashing also collapsed general layer/apt-cache overhead
+  elsewhere in the base image). `docker buildx build --squash` was
+  considered first but isn't available in this buildx version without the
+  containerd image store's experimental squash support; the manual
+  `COPY --from=builder / /` technique is the standard workaround and needs
+  no daemon flags.
+- **`docker-compose.yml`'s volume mount was silently pointing at the wrong
+  host path.** It read `${HOME}/webtop_data:/config`, but every deploy
+  command in this project is `sudo docker compose ...` (`kuba` isn't in the
+  `docker` group), and `sudo` resets `$HOME` to `/root` unless `-E` is
+  passed - so `${HOME}` was resolving to `/root/webtop_data`, not
+  `/home/kuba/webtop_data` as this doc and `scripts/backup-webtop-data.sh`
+  assume. Discovered because `~/webtop_data` on the server was nearly empty
+  (just created dirs, no real profile data) while `/root/webtop_data` held
+  the actual Chrome profile/Desktop shortcut/XFCE config. No data was lost,
+  but the documented backup path was silently backing up an empty directory.
+  Fixed by hardcoding the path in `docker-compose.yml`
+  (`/home/kuba/webtop_data:/config`, no `${HOME}` interpolation) so it's
+  invariant to how the command is invoked, then migrated
+  (`rsync -a --delete /root/webtop_data/ /home/kuba/webtop_data/` +
+  `chown -R 1001:1001`) and deleted the stale `/root/webtop_data`. Backed up
+  both the pre-migration `/root/webtop_data` and the final merged
+  `/home/kuba/webtop_data` to `~/backups/` before/after the change.
+
 ## Deviations found during implementation
 
 Two parts of the original plan didn't survive contact with reality — recorded

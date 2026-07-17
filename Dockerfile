@@ -6,7 +6,21 @@
 # Chromium" sync feature can't persist across restarts. Google Chrome ships
 # its own valid keys and only distributes glibc (.deb/.rpm) builds - hence
 # the Ubuntu base instead of Alpine here.
-FROM linuxserver/webtop:ubuntu-xfce
+#
+# Built as a multi-stage image: the `builder` stage does all the apt
+# install/purge work, then the final stage does `COPY --from=builder / /`
+# onto a bare `scratch` base. This is necessary (not just cosmetic) because
+# Docker layers are additive/union-based - deleting files in a later RUN
+# layer (see the trim step below) only adds "whiteout" markers, it does NOT
+# reclaim the disk space those files occupy in the earlier base-image layer,
+# so a naive single-stage build here still weighs ~5.36GB even after purging
+# ~576MB of packages. `COPY --from=builder / /` instead copies the final
+# merged filesystem view (post-whiteout) into a single fresh layer, so
+# deleted files are actually gone from the resulting image. All of the base
+# image's runtime metadata (ENV/EXPOSE/VOLUME/ENTRYPOINT/LABEL) has to be
+# re-declared explicitly in the final stage since COPY does not carry image
+# config over - captured via `docker inspect linuxserver/webtop:ubuntu-xfce`.
+FROM linuxserver/webtop:ubuntu-xfce AS builder
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends wget gnupg ca-certificates && \
@@ -48,4 +62,73 @@ RUN apt-get update && \
     else \
       echo "WARNING: google-chrome .desktop file not found - shortcut will need Exec flags added manually"; \
     fi
+
+# Trim other bloat baked into the linuxserver/webtop:ubuntu-xfce base that
+# this deployment has no use for:
+# - Docker-in-Docker (docker-ce/docker-ce-cli/containerd.io/docker-buildx-
+#   plugin/docker-compose-plugin, ~340MB) - linuxserver.io bundles this for
+#   their optional "mods" system; we don't run docker inside this container
+#   (no socket mounted, no mods used), so it's dead weight. Confirmed via
+#   `apt-get purge --simulate` that removing these 5 packages alone doesn't
+#   cascade into anything else (xfce4/desktop stays intact).
+# - locales-all (~236MB) ships precompiled data for EVERY locale; this
+#   desktop only ever runs LANG=en_US.UTF-8, so swap it for the much smaller
+#   `locales` package and generate just that one locale.
+# NOTE: deliberately NOT touching the gcc/g++/cmake/libc6-dev toolchain
+# (~270MB) - `apt-get purge --simulate` showed removing it cascades into
+# purging `xfce4`/`xfce4-session` themselves (something in the base image's
+# dependency chain ties the desktop metapackage to having a compiler present),
+# so it's not safely removable without breaking the desktop environment.
+RUN apt-get purge -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin && \
+    apt-get purge -y locales-all && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends locales && \
+    locale-gen en_US.UTF-8 && \
+    apt-get autoremove -y && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+# Final stage: copy the builder's merged rootfs (with purged files actually
+# gone) into a fresh single layer on scratch, then re-declare the runtime
+# metadata that linuxserver/webtop:ubuntu-xfce normally provides but which
+# COPY --from doesn't carry over automatically.
+FROM scratch
+
+COPY --from=builder / /
+
+ENV PATH="/lsiopy/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
+    HOME="/config" \
+    LANGUAGE="en_US.UTF-8" \
+    LANG="en_US.UTF-8" \
+    TERM="xterm" \
+    S6_CMD_WAIT_FOR_SERVICES_MAXTIME="0" \
+    S6_VERBOSITY="1" \
+    S6_STAGE2_HOOK="/docker-mods" \
+    VIRTUAL_ENV="/lsiopy" \
+    DISPLAY=":1" \
+    PERL5LIB="/usr/local/bin" \
+    START_DOCKER="true" \
+    PULSE_RUNTIME_PATH="/defaults" \
+    SELKIES_INTERPOSER="/usr/lib/selkies_joystick_interposer.so" \
+    NVIDIA_DRIVER_CAPABILITIES="all" \
+    DISABLE_ZINK="false" \
+    DISABLE_DRI3="false" \
+    SELKIES_ENCODER="x264enc,jpeg" \
+    TITLE="Ubuntu XFCE" \
+    LSIO_FIRST_PARTY="true"
+
+LABEL maintainer="thelamer" \
+      org.opencontainers.image.authors="linuxserver.io" \
+      org.opencontainers.image.description="webtop image by linuxserver.io" \
+      org.opencontainers.image.documentation="https://docs.linuxserver.io/images/docker-webtop" \
+      org.opencontainers.image.licenses="GPL-3.0-only" \
+      org.opencontainers.image.source="https://github.com/linuxserver/docker-webtop" \
+      org.opencontainers.image.title="Webtop" \
+      org.opencontainers.image.url="https://github.com/linuxserver/docker-webtop/packages" \
+      org.opencontainers.image.vendor="linuxserver.io"
+
+EXPOSE 3000/tcp 3001/tcp
+VOLUME ["/config"]
+WORKDIR /
+ENTRYPOINT ["/init"]
 
