@@ -144,9 +144,12 @@ TLS, bcrypt Basic Auth, and a fail2ban jail (see below).
   hashed (`htpasswd -B /etc/apache2/.htpasswd-desktop kuba`), HTTPS-only so
   credentials are encrypted in transit. This is intentionally simple per the
   current requirements — no SSO/2FA layer requested.
-- `fail2ban` is installed on the server but **inactive** — enable it and add a
-  jail watching Apache auth failures (`mod_auth_basic` 401s in the vhost's
-  error/access log) to mitigate brute force against the desktop login.
+- `fail2ban` is installed and running (`apache-auth` jail, `backend = auto`
+  explicitly set — Ubuntu's default `backend = systemd` doesn't work for
+  Apache's file-based error log, see deviations note above), watching
+  `/var/log/apache2/error.log` for `AH01617` Basic Auth failures. 5 failures
+  in 10 minutes → 1 hour ban. Config: `fail2ban/jail.d/desktop-darkplanet.conf`
+  in this repo. To unban an IP: `sudo fail2ban-client set apache-auth unbanip <ip>`.
 - `ufw` is inactive on this host and **intentionally left alone** — not part of
   this project's scope; security relies on webtop being loopback-only + Apache
   TLS + Basic Auth + fail2ban instead of a host firewall change on a shared
@@ -285,9 +288,21 @@ here so they aren't re-attempted:
   and shared with the user directly, NOT committed anywhere). Verified live:
   no-auth → 401, wrong password → 401, correct password → 200,
   `http://` → 301 redirect to `https://`.)*
-- [ ] **`desktop-fail2ban`** *(depends on vhost)* — Enable `fail2ban` (currently
+- [x] **`desktop-fail2ban`** *(depends on vhost)* — Enable `fail2ban` (currently
   installed but inactive) and add a jail watching the new vhost's Apache
   auth-failure log entries.
+  *(Done 2026-07-17 — `fail2ban` wasn't actually installed (earlier "inactive"
+  check was misleading — systemd reports "inactive" for a nonexistent unit
+  too); installed via apt. Jail config checked into
+  `fail2ban/jail.d/desktop-darkplanet.conf`, deployed to
+  `/etc/fail2ban/jail.d/desktop-darkplanet.conf`. Hit one real snag — Ubuntu's
+  `defaults-debian.conf` sets `backend = systemd` (journal) globally, so the
+  jail was checking journal entries instead of the actual
+  `/var/log/apache2/error.log` file Apache writes to, and never matched
+  anything. Fixed by explicitly setting `backend = auto` in the jail. Verified
+  live: 7 deliberate failed-Basic-Auth attempts triggered an actual ban of the
+  testing IP after the 5-attempt threshold; unbanned it afterward to keep
+  testing.)*
 - [ ] **`desktop-e2e-test`** *(depends on fail2ban)* — Log in through the
   browser via Basic Auth and confirm the desktop actually renders and streams
   through the reverse proxy over the public domain. This is the biggest open
