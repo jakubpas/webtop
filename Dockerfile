@@ -88,6 +88,15 @@ RUN apt-get purge -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin 
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
+# htop: requested for interactive CPU/RAM monitoring inside the desktop
+# (e.g. via a terminal) - ad-hoc `apk`/`apt` installs into the container's
+# writable layer don't persist across recreates, so it needs to live here to
+# stick around permanently.
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends htop && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
 # Final stage: copy the builder's merged rootfs (with purged files actually
 # gone) into a fresh single layer on scratch, then re-declare the runtime
 # metadata that linuxserver/webtop:ubuntu-xfce normally provides but which
