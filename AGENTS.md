@@ -116,8 +116,9 @@ can be opened from a browser and used like a normal remote Linux desktop.
   - Add `--restart unless-stopped --memory=2g --cpus=2` for resilience across
     reboots and to protect co-located production services from resource
     starvation.
-  - Keep `--shm-size=1gb` and the existing `SELKIES_*` high-DPI env vars —
-    those are fine as-is.
+  - Keep `--shm-size=1gb`. The `SELKIES_*` env vars were later retuned for
+    performance over quality — see "Post-deployment tuning & known quirks"
+    below (no longer the original high-DPI retina settings).
 - Existing containers on the box (context only, not part of this project):
   several stopped `grafana/alloy` containers and a `torchbearer-telemetry-relay`
   image — unrelated cruft, harmless to ignore.
@@ -220,6 +221,75 @@ sudo docker images
 active, and the desktop has been confirmed streaming correctly in-browser.
 See the checked-off plan below for what was done and the real issues hit
 along the way (worth reading before making further changes).
+
+## Post-deployment tuning & known quirks (2026-07-17, after initial go-live)
+
+A few things came up in day-to-day use after the initial deployment was
+confirmed working. Recorded here so they aren't re-discovered from scratch.
+
+- **Chromium desktop shortcut.** `/config/Desktop` ships empty in the image —
+  no icon on the desktop by default, even though Chromium itself *is* present
+  (`/usr/bin/chromium`, Alpine-based image, XFCE desktop). Fixed by copying
+  the existing `.desktop` file onto the persistent volume:
+  ```bash
+  sudo docker exec webtop cp /usr/share/applications/chromium.desktop /config/Desktop/chromium.desktop
+  sudo docker exec webtop chown abc:abc /config/Desktop/chromium.desktop
+  sudo docker exec webtop chmod +x /config/Desktop/chromium.desktop
+  ```
+  This persists (it's on the `/config` volume). XFCE may show it with an
+  "untrusted" shield the first time — right-click → **Allow Launching** once.
+- **Chromium profile (passwords, cookies, bookmarks) persists** across
+  container restarts — it lives at `/config/.config/chromium`, which is on the
+  `~/webtop_data` volume, not the container's writable layer.
+- **Chromium "profile in use by another process" error after every container
+  restart.** Chromium's `SingletonLock`/`SingletonCookie`/`SingletonSocket`
+  files embed the container's hostname, which changes every time the
+  container is recreated (`docker compose up -d`, image update, host reboot,
+  etc.), so the *previous* container's stale lock blocks the *new* one from
+  starting Chromium. Fix (needs to be re-run after every container
+  restart/recreate, currently manual — not yet automated):
+  ```bash
+  sudo docker exec webtop rm -f /config/.config/chromium/SingletonLock \
+    /config/.config/chromium/SingletonCookie /config/.config/chromium/SingletonSocket
+  ```
+  Possible future improvement (not yet done, user declined for now): add a
+  small script to `svc-de` or an s6 `cont-init.d` hook that clears these on
+  every container boot automatically.
+- **Performance tuning — no hardware video encode is available.** The host
+  has an Intel iGPU (`/dev/dri/card0` exists on the *host*, not passed into
+  the container), but it doesn't matter: Selkies' `x264enc`/pixelflux path
+  hard-codes `use_cpu = True` and disables the VAAPI render node whenever the
+  encoder is `x264enc` — only `nvh264enc` (NVIDIA/NVENC) would use hardware,
+  and there's no NVIDIA GPU here. So encoding is always CPU-bound regardless
+  of encoder choice; the only real levers are resolution, framerate, and CRF.
+  Current tuning in `docker-compose.yml` (user explicitly prioritized
+  performance over quality, but wanted a "not too small" desktop for
+  browsing):
+  - `SELKIES_MANUAL_WIDTH/HEIGHT=1600x900`, `SELKIES_SCALING_DPI=96` (down
+    from the original `2520x1240`/`192` DPI retina-tuned settings).
+  - `SELKIES_FRAMERATE=15` (fewer encodes/sec = direct CPU win).
+  - `SELKIES_H264_CRF=38` (higher CRF = cheaper/faster encode, lower quality —
+    acceptable since quality isn't a priority here).
+  - `SELKIES_ENCODER=x264enc` kept (not switched to `jpeg` — both are
+    CPU-bound with no hardware path available here, and `x264enc`'s
+    motion-compensated compression is generally cheaper overall for typical
+    desktop/browsing content than re-encoding full JPEG frames repeatedly).
+  - Verify current load with `sudo docker stats --no-stream webtop`.
+- **`pulseaudio` and `nginx` inside the container are not worth stripping.**
+  `pulseaudio` costs ~1% CPU / ~5MB RAM and is a structural dependency —
+  Selkies' own startup script calls `pactl load-module` to create audio sinks
+  even when audio is unused, so removing it breaks Selkies' init. `nginx`
+  barely registers in `top` and is the container's internal router for the
+  web UI/websocket/file-manager — not optional. Neither is a real lever for
+  the CPU usage seen; that's almost entirely Selkies' video encode (see
+  above).
+- **Ad-hoc package installs (e.g. `sudo apk add htop`) do not persist.** Only
+  `/config` (the `webtop_data` volume) survives a container recreate;
+  anything installed into the container's writable layer (via `apk`, etc.) is
+  gone on the next `docker compose up -d` / image update / reboot. If a tool
+  needs to persist permanently, it should go into a custom Dockerfile layered
+  on `linuxserver/webtop`, or an init script under `/config` — not yet done,
+  raise it again if actually needed.
 
 ## Deviations found during implementation
 

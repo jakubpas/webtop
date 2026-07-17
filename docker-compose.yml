@@ -7,15 +7,22 @@ services:
       - PUID=1001
       - PGID=1001
       - TZ=Europe/Warsaw
-      # Selkies high-DPI / manual resolution settings (see desktop script history
-      # for how these values were tuned for a 3024x1488 native display).
-      - SCREEN_WIDTH=2520
-      - SCREEN_HEIGHT=1240
+      # Performance-first tuning (2026-07-17): the box has no usable hardware
+      # video encode path (x264enc/pixelflux forces use_cpu=True regardless of
+      # the host's Intel iGPU - only nvh264enc/NVENC would use hardware, and
+      # there's no NVIDIA GPU here), so the only real CPU levers are fewer
+      # pixels, fewer frames/sec, and a cheaper CRF. Quality is not a concern
+      # per user request - traded down aggressively.
+      - SCREEN_WIDTH=1600
+      - SCREEN_HEIGHT=900
       - SELKIES_IS_MANUAL_RESOLUTION_MODE=true
-      - SELKIES_MANUAL_WIDTH=2520
-      - SELKIES_MANUAL_HEIGHT=1240
+      - SELKIES_MANUAL_WIDTH=1600
+      - SELKIES_MANUAL_HEIGHT=900
       - SELKIES_USE_CSS_SCALING=true
-      - SELKIES_SCALING_DPI=192
+      - SELKIES_SCALING_DPI=96
+      - SELKIES_FRAMERATE=15
+      - SELKIES_H264_CRF=38
+      - SELKIES_ENCODER=x264enc
       - CHROME_ARGS=--password-store=basic --no-sandbox
     ports:
       # Loopback-only: nothing external can reach the container directly.
