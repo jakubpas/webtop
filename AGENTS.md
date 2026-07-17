@@ -157,19 +157,33 @@ TLS, bcrypt Basic Auth, and a fail2ban jail (see below).
 - Container itself runs as `kuba`'s uid (1001) via PUID/PGID — no root-in-container
   surprises expected from `linuxserver/webtop`'s standard s6-init model.
 
-## Biggest open risk — verify before calling this "done"
+## Streaming through the reverse proxy — resolved, notes for the future
 
-`linuxserver/webtop` (per the `SELKIES_*` env vars already in the `desktop`
-script) uses **Selkies**, which streams the desktop via **WebRTC**, not a plain
-VNC/websocket protocol. Reverse-proxying WebRTC signaling through Apache
-(`proxy_wstunnel`) should carry the signaling channel fine, but actual media
-(video/audio) negotiation depends on ICE candidates and may behave differently
-once accessed from an arbitrary public client rather than the same LAN/Cloud
-Shell relay it was tuned for originally. **Must be tested end-to-end after
-deployment** — if the picture doesn't come through reliably, look at forcing
-TURN/relay-only ICE mode in the container's Selkies config, or consider
-switching to a KasmVNC-based image variant instead (pure TCP/websocket, no
-WebRTC/ICE complexity) as a fallback.
+Originally flagged as the biggest open risk: `linuxserver/webtop` uses
+**Selkies**, and the concern was that its WebRTC media negotiation (ICE
+candidates over NAT) might behave badly once accessed from an arbitrary public
+client through a reverse proxy. **This turned out not to be the actual
+problem** — in practice Selkies in this image tunnels its stream over a plain
+WebSocket at the `/websocket` path (confirmed by inspecting the container's
+internal nginx config, `/etc/nginx/http.d/default.conf`), not raw WebRTC media
+through the proxy. Ordinary WebSocket reverse-proxying works fine here.
+
+The actual bug hit was much simpler: `RewriteEngine On` was missing from the
+`:443` vhost (it does not inherit from the `:80` vhost above it), so the
+WebSocket rewrite rule silently no-op'd and everything fell through to plain
+`mod_proxy_http`, which can't perform a protocol Upgrade — surfacing in the
+browser as "WebSocket disconnected. Attempting to reconnect...". Fixed by
+adding `RewriteEngine On` explicitly to the SSL vhost. If this class of issue
+ever resurfaces (e.g. after further vhost edits), verify with:
+```bash
+curl -sk -v -u 'kuba:<password>' \
+  -H "Connection: Upgrade" -H "Upgrade: websocket" \
+  -H "Sec-WebSocket-Version: 13" -H "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==" \
+  https://desktop.darkplanet.pl/websocket
+```
+Expect `HTTP/1.1 101 Switching Protocols` in the response headers — anything
+else (200, hanging, connection reset) means the Upgrade isn't being proxied
+correctly.
 
 ## Useful commands (from this session's investigation)
 
@@ -303,13 +317,28 @@ here so they aren't re-attempted:
   live: 7 deliberate failed-Basic-Auth attempts triggered an actual ban of the
   testing IP after the 5-attempt threshold; unbanned it afterward to keep
   testing.)*
-- [ ] **`desktop-e2e-test`** *(depends on fail2ban)* — Log in through the
+- [x] **`desktop-e2e-test`** *(depends on fail2ban)* — Log in through the
   browser via Basic Auth and confirm the desktop actually renders and streams
   through the reverse proxy over the public domain. This is the biggest open
   risk (Selkies is WebRTC-based — ICE/NAT behavior through a public Apache
   proxy is untested). If it doesn't work reliably, look at forcing
   TURN/relay-only ICE in the container's Selkies config, or fall back to a
   KasmVNC-based image variant (plain TCP/websocket, no WebRTC).
+  *(Done 2026-07-17 — first attempt showed "WebSocket disconnected. Attempting
+  to reconnect..." looping in the browser. Root cause: `RewriteEngine On` was
+  missing from the `:443` vhost block (it doesn't inherit from the `:80` block
+  above it) — silently no-op'd the WebSocket rewrite rule, so `/websocket`
+  requests fell through to plain `mod_proxy_http`, which cannot perform an
+  Upgrade. Also discovered along the way that Selkies's actual WebSocket
+  endpoint is `/websocket` specifically (inspected the container's internal
+  nginx config at `/etc/nginx/http.d/default.conf` to find this — not
+  documented anywhere obvious). Fixed by adding `RewriteEngine On` to the SSL
+  vhost; verified via `curl` that `/websocket` now returns
+  `HTTP/1.1 101 Switching Protocols`, then confirmed by the user in-browser
+  that the desktop streams correctly. The WebRTC/ICE-through-proxy risk turned
+  out to be a non-issue — Selkies here tunnels over a plain WebSocket, not
+  raw WebRTC media, so ordinary reverse-proxying works fine once the Upgrade
+  path is correctly wired.)*
 - [ ] **`webtop-data-backup`** *(depends on docker run)* — Add `~/webtop_data`
   to the existing `~/backups` routine already present on darkplanet.pl, so the
   persistent browser profile/session state survives a rebuild.
