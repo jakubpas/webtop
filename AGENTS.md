@@ -205,11 +205,17 @@ Planning complete as of 2026-07-17. Implementation not yet started. Build order 
 
 ## Implementation plan (step-by-step, in dependency order)
 
-- [ ] **`dns-desktop-subdomain`** — Add `desktop IN A 142.4.215.81` to
+- [x] **`dns-desktop-subdomain`** — Add `desktop IN A 142.4.215.81` to
   `/etc/bind/zones/darkplanet.pl`, bump the SOA serial, `sudo rndc reload`.
-- [ ] **`dns-serial-helper`** *(depends on above)* — Add a small script/Makefile
+  *(Done 2026-07-17 — serial bumped to `2026071701`, record verified resolving
+  both locally and publicly via 8.8.8.8. Zone backed up to
+  `darkplanet.pl.bak.<timestamp>` on the server before editing.)*
+- [x] **`dns-serial-helper`** *(depends on above)* — Add a small script/Makefile
   target that safely reads and increments the zone's SOA serial (`YYYYMMDDnn`)
   so future edits don't risk a stale/incorrect serial silently blocking reloads.
+  *(Done 2026-07-17 — `scripts/bump-zone-serial.sh`, tested live against the
+  server: bumped serial `2026071701 → 2026071702`, validated with
+  `named-checkzone`, reloaded with `rndc reload`.)*
 - [ ] **`webtop-docker-run`** *(depends on DNS record)* — Create a
   `docker-compose.yml` in this repo: port `127.0.0.1:8082:3000`,
   `PUID=1001`/`PGID=1001` (matches `kuba`'s uid/gid on darkplanet.pl, NOT the
