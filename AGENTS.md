@@ -317,22 +317,30 @@ Ubuntu base.
 **What changed:**
 - `Dockerfile` (new, checked into this repo) - builds
   `FROM linuxserver/webtop:ubuntu-xfce` and installs `google-chrome-stable`
-  from Google's own apt repo alongside the stock Chromium (both remain
-  available). Built directly on darkplanet.pl via `docker compose build` -
-  AMD64 native (avoids the ARM64/AMD64 mismatch noted below) and it's just an
-  apt install layer, not a heavy compile, so it doesn't meaningfully compete
-  with production services on this shared host.
+  from Google's own apt repo. Built directly on darkplanet.pl via
+  `docker compose build` - AMD64 native (avoids the ARM64/AMD64 mismatch
+  noted below) and it's just an apt install layer, not a heavy compile, so it
+  doesn't meaningfully compete with production services on this shared host.
 - `docker-compose.yml` - `image: linuxserver/webtop:latest` replaced with a
   `build: { context: ., dockerfile: Dockerfile }` + `image: webtop-ubuntu-chrome:local`
   pair, so `docker compose build && docker compose up -d` (or
   `docker compose up -d --build`) rebuilds and redeploys in one step.
 - Google Chrome's `.desktop` file `Exec` line was patched at build time to
-  add `--no-sandbox --password-store=basic` (parity with the existing
+  add `--no-sandbox --password-store=basic` (parity with the previous
   Chromium `CHROME_ARGS` env var, which only chromium's own launcher script
-  reads - Chrome needs its flags set directly since it has its own launcher).
+  read - Chrome needs its flags set directly since it has its own launcher).
 - After deploying, `google-chrome.desktop` was copied onto
-  `/config/Desktop/` (same one-time step as the earlier Chromium shortcut) so
-  both browsers show up as icons.
+  `/config/Desktop/` (same one-time step as the earlier Chromium shortcut).
+- **Chromium was later removed entirely** (2026-07-17, same day - user didn't
+  want two browsers once Chrome worked): `Dockerfile` now also
+  `apt-get purge -y chromium chromium-common` plus `rm -f
+  /usr/bin/chromium-browser` (an orphaned launcher script not tracked by
+  dpkg, left behind after the purge - harmless dead cruft but removed for
+  tidiness). Confirmed safe: Chrome has no dependency on Chromium, and
+  `update-alternatives` already re-points `x-www-browser`/`gnome-www-browser`
+  at `google-chrome-stable` automatically. The old `chromium.desktop`
+  shortcut and cached profile (`/config/.config/chromium`,
+  `/config/.cache/chromium`) were also deleted from the `/config` volume.
 - **Gotcha hit while building:** the Dockerfile originally tried
   `apt-get purge -y wget gnupg` afterward to slim the image, but
   `google-chrome-stable` itself **depends on `gnupg`** (used for its own repo
@@ -344,7 +352,10 @@ Ubuntu base.
 - **Image is bigger than the original**: 5.35GB uncompressed vs. 3.33GB
   before (~60% bigger) - the Ubuntu-xfce base itself is heavier than Alpine,
   plus Chrome's own ~135MB package and dependencies. Still runs fine within
-  the existing `mem_limit: 2g` / `cpus: 2` caps.
+  the existing `mem_limit: 2g` / `cpus: 2` caps. Removing chromium afterward
+  only freed a few MB (its main cost was already paid by the Ubuntu base
+  switch, not chromium itself), so don't expect this to meaningfully shrink
+  the image again.
 - The stale-Chromium-`SingletonLock`-on-restart issue (see above) applies
   identically to Google Chrome's own profile dir
   (`/config/.config/google-chrome/Singleton*`) - same fix, same caveat about
