@@ -95,9 +95,11 @@ can be opened from a browser and used like a normal remote Linux desktop.
   the production services on this host.
   - `~/webtop_data` (persistent config/profile volume) is just an empty dir
     created directly on the server: `mkdir -p ~/webtop_data`.
-  - **Back this dir up**: fold `~/webtop_data` into the existing `~/backups`
-    routine already present on the server (it holds the persistent browser
-    profile/session state — worth preserving across a container/host rebuild).
+  - **Back this dir up manually**: `~/backups` on the server is an ad-hoc
+    dumping ground, not an automated routine (no crontab exists for `kuba`).
+    Use `scripts/backup-webtop-data.sh` (checked into this repo) to snapshot
+    `~/webtop_data` to `~/backups/webtop_data_<timestamp>.tar.gz` by hand
+    before any risky container/host change.
 - **`docker-compose.yml` is checked into this repo** (not a raw `docker run`
   bash script) — ports, PUID/PGID, `mem_limit`/`cpus`, `restart: unless-stopped`,
   and the volume mount are all declarative and diffable in git. Deploy dir on
@@ -213,7 +215,11 @@ sudo docker images
 
 ## Status
 
-Planning complete as of 2026-07-17. Implementation not yet started. Build order below.
+**Live and working as of 2026-07-17.** All 8 build steps complete —
+`https://desktop.darkplanet.pl` is deployed, TLS + Basic Auth + fail2ban are
+active, and the desktop has been confirmed streaming correctly in-browser.
+See the checked-off plan below for what was done and the real issues hit
+along the way (worth reading before making further changes).
 
 ## Deviations found during implementation
 
@@ -339,9 +345,16 @@ here so they aren't re-attempted:
   out to be a non-issue — Selkies here tunnels over a plain WebSocket, not
   raw WebRTC media, so ordinary reverse-proxying works fine once the Upgrade
   path is correctly wired.)*
-- [ ] **`webtop-data-backup`** *(depends on docker run)* — Add `~/webtop_data`
+- [x] **`webtop-data-backup`** *(depends on docker run)* — Add `~/webtop_data`
   to the existing `~/backups` routine already present on darkplanet.pl, so the
   persistent browser profile/session state survives a rebuild.
+  *(Done 2026-07-17 — turns out there's no automated backup routine to "fold
+  into" after all: `~/backups` is just an ad-hoc manual dumping ground, no
+  crontab exists for `kuba`. Added `scripts/backup-webtop-data.sh` instead,
+  matching that existing manual pattern rather than introducing new cron
+  automation on a shared production host unasked. Tested — produces
+  `~/backups/webtop_data_<timestamp>.tar.gz` on the server. Run it by hand
+  before any risky container/host change.)*
 
 Decisions already locked in (don't re-litigate without a good reason):
 Docker over native host desktop; public HTTPS + Basic Auth over a VPN/tunnel
