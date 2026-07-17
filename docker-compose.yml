@@ -1,6 +1,17 @@
 services:
   webtop:
-    image: linuxserver/webtop:latest
+    # Custom image (see ./Dockerfile): Ubuntu-xfce base + official Google
+    # Chrome installed alongside stock Chromium, so browser-sync sign-in
+    # actually persists (open-source Chromium lacks Google's private OAuth
+    # keys needed for that - see Dockerfile comment and AGENTS.md for the
+    # full explanation). Built directly on darkplanet.pl (`docker compose
+    # build`) - AMD64 native, and it's just an apt install layer, not a
+    # heavy compile, so this doesn't meaningfully compete with production
+    # services on this shared host.
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: webtop-ubuntu-chrome:local
     container_name: webtop
     restart: unless-stopped
     environment:

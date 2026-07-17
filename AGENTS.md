@@ -84,15 +84,17 @@ can be opened from a browser and used like a normal remote Linux desktop.
 
 - Docker 29.1.3 installed. `kuba` is **not** in the `docker` group — must always
   use `sudo docker ...` (confirmed passwordless).
-- **Image is pulled directly on the server**, not built/pulled locally and
-  streamed over — see "Deviations found during implementation" below for why
-  the original local-pull-then-`docker save | ssh ... docker load` plan was
-  abandoned (ARM64 vs AMD64 architecture mismatch). Just run
-  `sudo docker pull linuxserver/webtop:latest` (or `docker compose pull`) on
-  darkplanet.pl directly — the server is AMD64 so this always gets the right
-  architecture with no extra steps. A plain image pull is lightweight
-  (network + disk, not CPU-heavy), so this doesn't meaningfully compete with
-  the production services on this host.
+- **Image is a custom build now** (`webtop-ubuntu-chrome:local`, built from the
+  `Dockerfile` in this repo, `FROM linuxserver/webtop:ubuntu-xfce` + Google
+  Chrome installed on top — see "Custom image: Ubuntu + real Google Chrome"
+  below for why). Originally this was a plain `linuxserver/webtop:latest`
+  pull; see "Deviations found during implementation" for why local-pull-then-
+  stream was abandoned (ARM64 vs AMD64 mismatch) in favor of doing image
+  operations directly on the server. Same reasoning still applies to the
+  build: `cd ~/webtop && sudo docker compose build && sudo docker compose up -d`
+  run directly on darkplanet.pl — AMD64 native, no cross-arch ambiguity, and
+  it's just an apt-install layer (not a heavy compile), so it doesn't
+  meaningfully compete with production services on this host.
   - `~/webtop_data` (persistent config/profile volume) is just an empty dir
     created directly on the server: `mkdir -p ~/webtop_data`.
   - **Back this dir up manually**: `~/backups` on the server is an ad-hoc
@@ -299,6 +301,54 @@ confirmed working. Recorded here so they aren't re-discovered from scratch.
   needs to persist permanently, it should go into a custom Dockerfile layered
   on `linuxserver/webtop`, or an init script under `/config` — not yet done,
   raise it again if actually needed.
+
+## Custom image: Ubuntu + real Google Chrome (2026-07-17)
+
+**Why:** open-source Chromium (shipped by every distro, including the
+original Alpine-based image) lacks Google's proprietary OAuth API keys, so
+the browser-level "sign in to Chromium" sync (top-right avatar, syncing
+bookmarks/settings to a Google account) can't persist across restarts -
+purely a limitation of the binary, not of profile persistence (regular
+website logins/passwords/cookies already persisted fine before this change).
+Google only distributes the real `google-chrome-stable` package as glibc
+(.deb/.rpm) builds, so this required switching off Alpine (musl) onto an
+Ubuntu base.
+
+**What changed:**
+- `Dockerfile` (new, checked into this repo) - builds
+  `FROM linuxserver/webtop:ubuntu-xfce` and installs `google-chrome-stable`
+  from Google's own apt repo alongside the stock Chromium (both remain
+  available). Built directly on darkplanet.pl via `docker compose build` -
+  AMD64 native (avoids the ARM64/AMD64 mismatch noted below) and it's just an
+  apt install layer, not a heavy compile, so it doesn't meaningfully compete
+  with production services on this shared host.
+- `docker-compose.yml` - `image: linuxserver/webtop:latest` replaced with a
+  `build: { context: ., dockerfile: Dockerfile }` + `image: webtop-ubuntu-chrome:local`
+  pair, so `docker compose build && docker compose up -d` (or
+  `docker compose up -d --build`) rebuilds and redeploys in one step.
+- Google Chrome's `.desktop` file `Exec` line was patched at build time to
+  add `--no-sandbox --password-store=basic` (parity with the existing
+  Chromium `CHROME_ARGS` env var, which only chromium's own launcher script
+  reads - Chrome needs its flags set directly since it has its own launcher).
+- After deploying, `google-chrome.desktop` was copied onto
+  `/config/Desktop/` (same one-time step as the earlier Chromium shortcut) so
+  both browsers show up as icons.
+- **Gotcha hit while building:** the Dockerfile originally tried
+  `apt-get purge -y wget gnupg` afterward to slim the image, but
+  `google-chrome-stable` itself **depends on `gnupg`** (used for its own repo
+  signing verification) - purging `gnupg` silently dragged `google-chrome-stable`
+  down with it via apt's dependency resolver (visible in the build log as
+  `gnupg* google-chrome-stable* wget*` all marked for removal together, despite
+  only `wget`/`gnupg` being named on the purge command line). Fixed by simply
+  not purging `wget`/`gnupg` - not worth the ~15MB saved.
+- **Image is bigger than the original**: 5.35GB uncompressed vs. 3.33GB
+  before (~60% bigger) - the Ubuntu-xfce base itself is heavier than Alpine,
+  plus Chrome's own ~135MB package and dependencies. Still runs fine within
+  the existing `mem_limit: 2g` / `cpus: 2` caps.
+- The stale-Chromium-`SingletonLock`-on-restart issue (see above) applies
+  identically to Google Chrome's own profile dir
+  (`/config/.config/google-chrome/Singleton*`) - same fix, same caveat about
+  it not yet being automated.
 
 ## Deviations found during implementation
 
